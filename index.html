@@ -1,0 +1,368 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>bloom</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box;}
+  html,body{width:100%;height:100%;overflow:hidden;background:#05060c;}
+  body{touch-action:none;}
+  #scene{position:fixed;inset:0;width:100%;height:100%;display:block;}
+  .vignette{position:fixed;inset:0;pointer-events:none;
+    background:radial-gradient(ellipse at center,transparent 45%,rgba(0,0,0,.6) 100%);}
+</style>
+</head>
+<body>
+<canvas id="scene"></canvas>
+<div class="vignette"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+(function(){
+"use strict";
+
+const canvas=document.getElementById('scene');
+const renderer=new THREE.WebGLRenderer({canvas,antialias:true,alpha:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+renderer.setSize(innerWidth,innerHeight);
+
+const scene=new THREE.Scene();
+scene.fog=new THREE.FogExp2(0x05060c,0.02);
+
+const camera=new THREE.PerspectiveCamera(52,innerWidth/innerHeight,0.1,100);
+
+function frame(){
+  const portrait = innerHeight>innerWidth;
+  camera.position.set(0,3.4, portrait?18:13);
+  camera.lookAt(0,3.4,0);
+  camera.aspect=innerWidth/innerHeight;
+  camera.updateProjectionMatrix();
+}
+frame();
+
+function dotTex(){
+  const c=document.createElement('canvas');c.width=c.height=64;
+  const x=c.getContext('2d');
+  const g=x.createRadialGradient(32,32,0,32,32,32);
+  g.addColorStop(0,'rgba(255,255,255,1)');
+  g.addColorStop(0.35,'rgba(255,255,255,0.9)');
+  g.addColorStop(1,'rgba(255,255,255,0)');
+  x.fillStyle=g;x.fillRect(0,0,64,64);
+  return new THREE.CanvasTexture(c);
+}
+const DOT=dotTex();
+
+const plant=new THREE.Group();
+scene.add(plant);
+
+const dots=[];
+const colors=[];
+function addDot(tx,ty,tz, cr,cg,cb, t0,t1){
+  const a=Math.random()*Math.PI*2, r=4+Math.random()*7;
+  dots.push({
+    sx:Math.cos(a)*r, sy:-3+Math.random()*4, sz:Math.sin(a)*r,
+    tx,ty,tz, t0,t1,
+    seed:Math.random()
+  });
+  colors.push(cr,cg,cb);
+}
+
+function jit(v,amt){return Math.min(1,Math.max(0,v+(Math.random()-0.5)*amt));}
+const C={
+  stem:[0.10,0.78,0.42],
+  leaf:[0.09,0.68,0.38],
+  bud :[0.20,0.80,0.45],
+  petalW:[1.0,0.97,0.99],
+  petalLight:[1.0,0.72,0.85],
+  petalDark:[0.86,0.18,0.48],
+  center:[1.0,0.82,0.30],
+};
+
+const MAIN_TOP=5.0;
+const mainCurve=new THREE.CatmullRomCurve3([
+  new THREE.Vector3(0,0,0),
+  new THREE.Vector3(0.12,1.4,0.04),
+  new THREE.Vector3(-0.12,2.8,-0.04),
+  new THREE.Vector3(0.08,MAIN_TOP,0),
+]);
+function stemDots(curve, count, rad, t0,t1, col){
+  for(let i=0;i<count;i++){
+    const u=i/count;
+    const p=curve.getPoint(u);
+    const ang=Math.random()*Math.PI*2, rr=Math.random()*rad;
+    const tt0=t0+u*(t1-t0)*0.9;
+    addDot(p.x+Math.cos(ang)*rr, p.y, p.z+Math.sin(ang)*rr,
+      jit(col[0],0.08),jit(col[1],0.12),jit(col[2],0.08), tt0, tt0+0.9);
+  }
+}
+stemDots(mainCurve, 420, 0.1, 1.2, 4.2, C.stem);
+
+const HEADS=[
+  {startH:0.60, end:new THREE.Vector3(-1.9,5.5,0.6),  tOff:0.0,  size:1.0},
+  {startH:0.80, end:new THREE.Vector3( 1.8,6.2,-0.4), tOff:1.1,  size:0.9},
+  {startH:0.45, end:new THREE.Vector3( 0.3,6.9,0.9),  tOff:2.2,  size:1.05},
+];
+HEADS.forEach((h,hi)=>{
+  const base=mainCurve.getPoint(h.startH);
+  const mid=new THREE.Vector3().lerpVectors(base,h.end,0.5);
+  mid.x+=(h.end.x-base.x)*0.22; mid.y+=0.5; mid.z+=h.end.z*0.3;
+  const curve=new THREE.CatmullRomCurve3([base,mid,h.end]);
+  stemDots(curve, 200, 0.07, 3.8+hi*0.3, 5.6+hi*0.3, C.stem);
+});
+
+function leafDots(origin, dirZ, yaw, t0){
+  const n=140;
+  for(let i=0;i<n;i++){
+    const v=Math.random();
+    const w=(Math.sin(v*Math.PI))*0.45*(1-v*0.3);
+    const u=(Math.random()*2-1)*w;
+    let lx=u, ly=v*2.4, lz=Math.sin(v*2)*0.12;
+    const cz=Math.cos(dirZ), sz=Math.sin(dirZ);
+    let rx=lx*cz-ly*sz, ry=lx*sz+ly*cz, rz=lz;
+    const cy=Math.cos(yaw), sy=Math.sin(yaw);
+    const fx=rx*cy-rz*sy, fz=rx*sy+rz*cy;
+    addDot(origin.x+fx, origin.y+ry, origin.z+fz,
+      jit(C.leaf[0],0.06),jit(C.leaf[1],0.12),jit(C.leaf[2],0.06),
+      t0+v*0.8, t0+v*0.8+0.8);
+  }
+}
+leafDots(mainCurve.getPoint(0.30), -1.0, 0.4, 4.0);
+leafDots(mainCurve.getPoint(0.52),  1.0, 2.0, 4.4);
+leafDots(mainCurve.getPoint(0.72), -1.0, 3.4, 4.8);
+
+const flowerMeta=[];
+HEADS.forEach((h)=>{
+  const t0=6.0+h.tOff;
+  const start=dots.length;
+  const PET=6, perPetal=1100, size=h.size;
+  for(let pz=0; pz<PET; pz++){
+    const baseAng=(pz/PET)*Math.PI*2 + (pz%2)*(Math.PI/PET);
+    const openTilt=(pz%2)?1.35:1.12;
+    for(let i=0;i<perPetal;i++){
+      const v=Math.random();
+      const width=(Math.sin(v*Math.PI)*1.05)*(0.52-v*0.10);
+      const u=(Math.random()*2-1)*width;
+      let px=u;
+      let py=v*2.3*size;
+      let pz3=-(u*u)*2.0*size;
+      if(v>0.65){const k=(v-0.65)/0.35; pz3+=k*k*0.8*size;}
+      const top = i%2===0;
+      pz3 += top ? 0.04*size : 0.0;
+      const ct=Math.cos(-openTilt), st=Math.sin(-openTilt);
+      let ry=py*ct-pz3*st, rz=py*st+pz3*ct;
+      const ca=Math.cos(baseAng), sa=Math.sin(baseAng);
+      let fx=px*ca-rz*sa, fz=px*sa+rz*ca;
+      let cr,cg,cb;
+      if(top){ cr=jit(C.petalDark[0],0.08); cg=jit(C.petalDark[1],0.10); cb=jit(C.petalDark[2],0.10); }
+      else   { cr=jit(C.petalLight[0],0.06); cg=jit(C.petalLight[1],0.08); cb=jit(C.petalLight[2],0.08); }
+      if(v>0.55 && Math.random()<0.12){ cr=jit(C.petalW[0],0.04); cg=jit(C.petalW[1],0.05); cb=jit(C.petalW[2],0.05); }
+      const tt0=t0 + (pz/PET)*1.2 + v*0.6;
+      addDot(h.end.x+fx*size, h.end.y+ry*size, h.end.z+fz*size, cr,cg,cb, tt0, tt0+1.6);
+    }
+  }
+  for(let i=0;i<24;i++){
+    const a=Math.random()*Math.PI*2, r=Math.random()*0.22*size;
+    addDot(h.end.x+Math.cos(a)*r, h.end.y+0.15+Math.random()*0.4*size, h.end.z+Math.sin(a)*r,
+      jit(C.center[0],0.05),jit(C.center[1],0.1),jit(C.center[2],0.15), t0+1.4, t0+2.6);
+  }
+  flowerMeta.push({cx:h.end.x,cy:h.end.y,cz:h.end.z,start,end:dots.length,t0});
+});
+
+const N=dots.length;
+const geo=new THREE.BufferGeometry();
+const pos=new Float32Array(N*3);
+const col=new Float32Array(N*3);
+const alpha=new Float32Array(N);
+for(let i=0;i<N;i++){
+  pos[i*3]=dots[i].sx; pos[i*3+1]=dots[i].sy; pos[i*3+2]=dots[i].sz;
+  col[i*3]=colors[i*3]; col[i*3+1]=colors[i*3+1]; col[i*3+2]=colors[i*3+2];
+  alpha[i]=0;
+}
+geo.setAttribute('position',new THREE.BufferAttribute(pos,3));
+geo.setAttribute('color',new THREE.BufferAttribute(col,3));
+geo.setAttribute('alpha',new THREE.BufferAttribute(alpha,1));
+
+const mat=new THREE.ShaderMaterial({
+  uniforms:{ uTex:{value:DOT}, uSize:{value: (innerHeight>innerWidth?32:25) } },
+  vertexShader:`
+    attribute float alpha; attribute vec3 color;
+    varying float vA; varying vec3 vC;
+    uniform float uSize;
+    void main(){
+      vA=alpha; vC=color;
+      vec4 mv=modelViewMatrix*vec4(position,1.0);
+      gl_PointSize=uSize*(1.0/-mv.z);
+      gl_Position=projectionMatrix*mv;
+    }`,
+  fragmentShader:`
+    uniform sampler2D uTex; varying float vA; varying vec3 vC;
+    void main(){
+      float m=texture2D(uTex,gl_PointCoord).a;
+      if(m<0.05) discard;
+      gl_FragColor=vec4(vC, m*vA);
+    }`,
+  transparent:true, depthWrite:false, blending:THREE.NormalBlending
+});
+const points=new THREE.Points(geo,mat);
+plant.add(points);
+
+const G=160;
+const gGeo=new THREE.BufferGeometry();
+const gPos=new Float32Array(G*3), gSpd=new Float32Array(G);
+for(let i=0;i<G;i++){gPos[i*3]=(Math.random()-.5)*24;gPos[i*3+1]=Math.random()*15-2;gPos[i*3+2]=(Math.random()-.5)*16;gSpd[i]=0.2+Math.random()*0.5;}
+gGeo.setAttribute('position',new THREE.BufferAttribute(gPos,3));
+const gMat=new THREE.PointsMaterial({map:DOT,color:0xcfffe8,size:0.12,transparent:true,opacity:0.5,depthWrite:false,blending:THREE.AdditiveBlending});
+const glitter=new THREE.Points(gGeo,gMat);
+scene.add(glitter);
+
+/* ===========================================================
+   BUTTERFLIES (x2) — solid real-color wings + subtle glitter outline.
+   Attached to `scene`, NOT `plant`, so the mouse tilt never moves them.
+   =========================================================== */
+function wingShape(){
+  const s=new THREE.Shape();
+  s.moveTo(0,0);
+  s.bezierCurveTo(0.05,0.28, 0.42,0.34, 0.46,0.12);
+  s.bezierCurveTo(0.50,-0.02,0.34,-0.06,0.22,-0.02);
+  s.bezierCurveTo(0.40,-0.10,0.34,-0.34,0.16,-0.30);
+  s.bezierCurveTo(0.06,-0.28,0.02,-0.14,0,0);
+  return s;
+}
+function wingOutline(shape,count){
+  const pts=shape.getPoints(count);
+  const arr=new Float32Array(pts.length*3);
+  for(let i=0;i<pts.length;i++){arr[i*3]=pts[i].x;arr[i*3+1]=pts[i].y;arr[i*3+2]=0.002;}
+  return arr;
+}
+
+function makeButterfly(bodyColor, wingColor, accentColor, scale){
+  const bf=new THREE.Group();
+
+  const shape=wingShape();
+  const wingGeo=new THREE.ShapeGeometry(shape,32);
+  const outlineArr=wingOutline(shape,64);
+
+  const leftPiv=new THREE.Group();
+  const rightPiv=new THREE.Group();
+  bf.add(leftPiv); bf.add(rightPiv);
+
+  function buildSide(piv,mirror){
+    const mat=new THREE.MeshBasicMaterial({color:wingColor,side:THREE.DoubleSide,transparent:true,opacity:0.95});
+    const wing=new THREE.Mesh(wingGeo,mat);
+    const accMat=new THREE.MeshBasicMaterial({color:accentColor,side:THREE.DoubleSide,transparent:true,opacity:0.85});
+    const acc=new THREE.Mesh(new THREE.CircleGeometry(0.07,12),accMat);
+    acc.position.set(0.28,0.12,0.001);
+    const acc2=new THREE.Mesh(new THREE.CircleGeometry(0.045,12),accMat);
+    acc2.position.set(0.18,-0.16,0.001);
+    const oGeo=new THREE.BufferGeometry();
+    oGeo.setAttribute('position',new THREE.BufferAttribute(outlineArr.slice(),3));
+    const oMat=new THREE.PointsMaterial({map:DOT,color:0xfff4ff,size:0.05,transparent:true,opacity:0.7,depthWrite:false,blending:THREE.AdditiveBlending});
+    const outline=new THREE.Points(oGeo,oMat);
+
+    wing.add(acc); wing.add(acc2); wing.add(outline);
+    wing.scale.x = mirror? -1 : 1;
+    piv.add(wing);
+    piv.userData={oMat};
+  }
+  buildSide(leftPiv,true);
+  buildSide(rightPiv,false);
+
+  // tiny body (cylinder — CapsuleGeometry isn't in three r128)
+  const body=new THREE.Mesh(
+    new THREE.CylinderGeometry(0.02,0.012,0.22,6),
+    new THREE.MeshBasicMaterial({color:bodyColor})
+  );
+  bf.add(body);
+
+  bf.scale.setScalar(scale);
+  bf.userData={leftPiv,rightPiv};
+  return bf;
+}
+
+const butterflies=[];
+const b1=makeButterfly(0x2a1c10, 0xff7a1a, 0x3a1e05, 0.9);
+b1.userData.path={cx:-2.6, cy:5.2, cz:1.6, rx:0.9, ry:0.7, rz:0.6, sp:0.5, ph:0};
+scene.add(b1); butterflies.push(b1);
+const b2=makeButterfly(0x101024, 0x6a7bff, 0xbf4bff, 0.75);
+b2.userData.path={cx:2.4, cy:6.4, cz:1.2, rx:0.8, ry:0.6, rz:0.7, sp:0.42, ph:2.0};
+scene.add(b2); butterflies.push(b2);
+
+const BF_IN=9.0;
+
+const m={x:0,y:0}, cur={x:0,y:0};
+function setM(cx,cy){ m.x=(cx/innerWidth)*2-1; m.y=(cy/innerHeight)*2-1; }
+addEventListener('mousemove',e=>setM(e.clientX,e.clientY));
+addEventListener('touchmove',e=>{if(e.touches[0])setM(e.touches[0].clientX,e.touches[0].clientY);},{passive:true});
+addEventListener('touchstart',e=>{if(e.touches[0])setM(e.touches[0].clientX,e.touches[0].clientY);},{passive:true});
+
+const easeInOut=t=>t<0.5?2*t*t:1-Math.pow(-2*t+2,2)/2;
+const smooth=(t,a,b)=>Math.max(0,Math.min(1,(t-a)/(b-a)));
+
+let start=null;
+const posAttr=geo.attributes.position, aAttr=geo.attributes.alpha;
+
+function animate(ts){
+  requestAnimationFrame(animate);
+  if(start===null)start=ts;
+  const el=(ts-start)/1000;
+
+  cur.x+=(m.x-cur.x)*0.06; cur.y+=(m.y-cur.y)*0.06;
+  plant.rotation.y = cur.x*0.9;
+  plant.rotation.x = -cur.y*0.75;
+  plant.rotation.z = -cur.x*0.12;
+  plant.position.z = (cur.y<0? -cur.y*1.6:0);
+  plant.position.x = Math.sin(el*0.5)*0.06;
+
+  const P=posAttr.array, A=aAttr.array;
+  for(let i=0;i<N;i++){
+    const d=dots[i];
+    const s=easeInOut(smooth(el,d.t0,d.t1));
+    const swirl=(1-s)*Math.sin(el*1.3+d.seed*9)*0.25;
+    P[i*3]  =d.sx+(d.tx-d.sx)*s+swirl;
+    P[i*3+1]=d.sy+(d.ty-d.sy)*s;
+    P[i*3+2]=d.sz+(d.tz-d.sz)*s+swirl;
+    A[i]=s;
+  }
+  posAttr.needsUpdate=true; aAttr.needsUpdate=true;
+
+  const gp=gGeo.attributes.position.array;
+  for(let i=0;i<G;i++){gp[i*3+1]+=gSpd[i]*0.008;if(gp[i*3+1]>13)gp[i*3+1]=-2;}
+  gGeo.attributes.position.needsUpdate=true;
+  gMat.opacity=0.4+Math.sin(el*2.2)*0.15;
+  glitter.rotation.y=el*0.02;
+
+  const bfA=easeInOut(smooth(el,BF_IN,BF_IN+2.0));
+  butterflies.forEach((bf)=>{
+    const p=bf.userData.path;
+    const tt=el*p.sp+p.ph;
+    bf.position.set(
+      p.cx+Math.cos(tt)*p.rx,
+      p.cy+Math.sin(tt*1.3)*p.ry*0.6+Math.sin(el*1.1+p.ph)*0.12,
+      p.cz+Math.sin(tt)*p.rz
+    );
+    bf.rotation.y = -tt + Math.PI/2;
+    bf.rotation.z = Math.sin(tt)*0.12;
+    const flap=Math.sin(el*9+p.ph)*0.7+0.1;
+    bf.userData.leftPiv.rotation.y = flap;
+    bf.userData.rightPiv.rotation.y = -flap;
+    bf.scale.setScalar((bf===b2?0.75:0.9)*bfA);
+    bf.visible=bfA>0.01;
+    const tw=0.5+Math.sin(el*4+p.ph)*0.25;
+    bf.userData.leftPiv.userData.oMat.opacity=tw;
+    bf.userData.rightPiv.userData.oMat.opacity=tw;
+  });
+
+  renderer.render(scene,camera);
+}
+requestAnimationFrame(animate);
+
+addEventListener('resize',()=>{
+  renderer.setSize(innerWidth,innerHeight);
+  mat.uniforms.uSize.value = innerHeight>innerWidth?32:25;
+  frame();
+});
+})();
+</script>
+</body>
+</html>
